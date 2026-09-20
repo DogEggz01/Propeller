@@ -18,9 +18,12 @@ Astonding technology breakthrough from Al'Ankh Academy!
   - Power switch: On/off
   - Water Switch: Water/Air
     - It control if propeller need to be submerged in water to produce propulsion. If switch to Air it will work everywhere, even submerged.
-  - Engine Power: 5-100. Use the arrow below to control the power.
-  - Wheel Control: after click, make wheel control this propeller's throttle
-  - Throttle meter: Show current throttle. Press W/S while holding wheel to increase/decrease throttle.
+  - Engine Power: 5-100
+    - Use the arrow below to control the power.
+  - Throttle meter: Show current throttle. 
+      - Press W/S while holding wheel to increase/decrease throttle.
+  - Wheel Control: after click, make wheel control this propeller's throttle  
+  
 <img width="3840" height="2160" alt="2046A5~1" src="https://github.com/user-attachments/assets/da86f056-4772-4532-a324-69b8506c258a" />
 
 - You can install multiple propeller on same boat. There is no limit, but each panel only pair with 1 propeller.
