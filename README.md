@@ -1,4 +1,6 @@
 # Propeller
+*Disclaimer: This mod is made with ChatGPT 6.0 Astra*
+
 Astonding technology breakthrough from Al'Ankh Academy!
 
 ## Propeller and control panel
