@@ -28,3 +28,6 @@ Astonding technology breakthrough from Al'Ankh Academy!
 
 - You can install multiple propeller on same boat. There is no limit, but each panel only pair with 1 propeller.
   - The force will stack, so putting on 3 propeller is faster than 1.
+- 2 option in configurator
+  - Offset: control the force emitter vertical offset
+  - Trim Angle: Control the bow lifting angle for propulsion. If disable you will find yourself nosedive into water in high propulsion force
