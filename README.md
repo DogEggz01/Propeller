@@ -24,3 +24,4 @@ Astonding technology breakthrough from Al'Ankh Academy!
 <img width="3840" height="2160" alt="2046A5~1" src="https://github.com/user-attachments/assets/da86f056-4772-4532-a324-69b8506c258a" />
 
 - You can install multiple propeller on same boat. There is no limit, but each panel only pair with 1 propeller.
+  - The force will stack, so putting on 3 propeller is faster than 1.
