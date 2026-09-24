@@ -34,10 +34,10 @@ namespace JetPump
         private readonly Vector3[] displacement = new Vector3[ProbeCount], normals = new Vector3[ProbeCount];
         private readonly Vector3[] sampledPoints = new Vector3[ProbeCount], historyPoints = new Vector3[ProbeCount * History];
         private readonly int[] historyFrames = new int[History];
-        private readonly float[] historyTimes = new float[History], heights = new float[ProbeCount];
+        private readonly float[] historyTimes = new float[History], historyOffsets = new float[History], heights = new float[ProbeCount];
         private readonly int queryId;
         private ICollProvider provider;
-        private float sampledAt;
+        private float sampledAt, sampledOffset;
         private bool hasSample;
         internal bool Submerged { get; private set; }
         internal bool SampleValid { get; private set; }
@@ -62,7 +62,7 @@ namespace JetPump
         internal Vector3 WorldPoint(int index)
         {
             var item = owner.Item;
-            return PumpItem.ConvertPoint(item.itemRigidbodyC.transform.TransformPoint(localPoints[index]), item.currentWalkCol, item.currentActualBoat);
+            return PumpItem.ConvertPoint(item.itemRigidbodyC.transform.TransformPoint(localPoints[index]), item.currentWalkCol, item.currentActualBoat) + owner.SpatialOffset;
         }
         internal void Sample()
         {
@@ -71,7 +71,7 @@ namespace JetPump
             if (provider != current) { hasSample = Submerged = false; provider = current; }
             if (provider == null) { hasSample = SampleValid = Submerged = false; return; }
             int slot = Time.frameCount % History;
-            historyFrames[slot] = Time.frameCount; historyTimes[slot] = Time.unscaledTime;
+            historyFrames[slot] = Time.frameCount; historyTimes[slot] = Time.unscaledTime; historyOffsets[slot] = Plugin.VerticalOffset;
             for (int i = 0; i < ProbeCount; i++) historyPoints[slot * ProbeCount + i] = queries[i] = WorldPoint(i);
             int status = provider.Query(queryId, .2f, queries, displacement, normals, null);
             hasSample = provider.RetrieveSucceeded(status);
@@ -87,7 +87,7 @@ namespace JetPump
                     if (historyFrames[resultSlot] != segment.z) hasSample = false;
                 }
             }
-            sampledAt = historyTimes[resultSlot];
+            sampledAt = historyTimes[resultSlot]; sampledOffset = historyOffsets[resultSlot];
             for (int i = 0; i < ProbeCount; i++)
             {
                 sampledPoints[i] = historyPoints[resultSlot * ProbeCount + i];
@@ -99,7 +99,7 @@ namespace JetPump
         internal void Evaluate()
         {
             var ocean = OceanRenderer.Instance;
-            bool valid = hasSample && ocean && ocean.CollisionProvider == provider && Time.unscaledTime - sampledAt <= .25f;
+            bool valid = hasSample && sampledOffset == Plugin.VerticalOffset && ocean && ocean.CollisionProvider == provider && Time.unscaledTime - sampledAt <= .25f;
             float minimumDepth = float.PositiveInfinity;
             for (int i = 0; i < ProbeCount; i++)
             {
@@ -111,7 +111,7 @@ namespace JetPump
                 minimumDepth = Mathf.Min(minimumDepth, surface - point.y);
             }
             SampleValid = valid;
-            Submerged = valid && minimumDepth + Plugin.WaterOffset > (Submerged ? 0f : .02f);
+            Submerged = valid && minimumDepth > (Submerged ? 0f : .02f);
         }
         internal float Power(PumpRecord record) => !record.RequireImmersion || Submerged ? record.AppliedPower : 0f;
 
@@ -224,4 +224,33 @@ namespace JetPump
             PumpInput.HandleWheelInput(__instance, GameInput.GetKey(InputName.MoveUp), GameInput.GetKey(InputName.MoveDown), Time.deltaTime);
         }
     }
+    // Observe successful vanilla embark changes; do not infer disembarking from distance.
+    [HarmonyPatch]
+    internal static class PumpSafety
+    {
+        private static IEnumerable<MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(PlayerEmbarkerNew), "PlayerDisembark");
+            yield return AccessTools.Method(typeof(PlayerEmbarkerNew), "PlayerEmbark");
+            yield return AccessTools.Method(typeof(PlayerEmbarkDisembarkTrigger), "ExitBoat");
+            yield return AccessTools.Method(typeof(PlayerEmbarkDisembarkTrigger), "EnterBoat");
+            yield return AccessTools.Method(typeof(PlayerEmbarkTriggerNew), "ExitBoat");
+            yield return AccessTools.Method(typeof(PlayerEmbarkTriggerNew), "EnterBoat");
+        }
+        private static void Prefix(out Transform __state) { __state = GameState.currentBoat; }
+        private static void Postfix(Transform __state) { BoatChanged(__state, GameState.currentBoat); }
+        internal static void BoatChanged(Transform before, Transform after)
+        {
+            if (!Plugin.Ready || !before || before == after || !GameState.playing || PumpWorld.Loading ||
+                GameState.currentlyLoading || GameState.loadingBoatLocalItems || GameState.justStarted ||
+                GameState.recovering || GameState.currentShipyard || GameState.sleeping || GameState.inBed || GameState.justWokeUp) return;
+            int boatId = PumpWorld.BoatId(before);
+            if (after && boatId == PumpWorld.BoatId(after)) return;
+            PumpWorld.State.SafetyShutdown(boatId);
+            foreach (var item in PumpWorld.Live)
+                if (item && item.IsPump && item.Record != null && item.Record.BoatId == boatId && !item.Record.Enabled)
+                    item.StopDrive();
+        }
+    }
+
 }

@@ -13,7 +13,7 @@ namespace JetPump
 {
     // Plugin setup, configuration, asset registration and persistent world state.
 
-    [BepInPlugin(Guid, "Propeller", "1.0.0")]
+    [BepInPlugin(Guid, "Propeller", "1.1.0")]
     [BepInDependency("com.nandbrew.nandcommand", BepInDependency.DependencyFlags.SoftDependency)]
     public sealed class Plugin : BaseUnityPlugin
     {
@@ -22,7 +22,9 @@ namespace JetPump
         internal static bool Ready;
         private static ConfigEntry<float> waterOffset;
         private static ConfigEntry<float> trimAngle;
-        internal static float WaterOffset => Finite(waterOffset, 0f, -.2f, .2f);
+        private static ConfigEntry<bool> showMarkers;
+        internal static bool ShowMarkers => showMarkers != null && showMarkers.Value;
+        internal static float VerticalOffset => Mathf.Round(Finite(waterOffset, 0f, -2f, 2f) * 100f) / 100f;
         private static float Finite(ConfigEntry<float> entry, float fallback, float min, float max)
         {
             float value = entry == null ? fallback : entry.Value;
@@ -34,10 +36,34 @@ namespace JetPump
         }
         internal static void BindSettings(ConfigFile config)
         {
-            waterOffset = config.Bind("Water", "Contact offset (metres)", 0f, new ConfigDescription("Small contact calibration only. Positive activates slightly earlier; negative requires deeper immersion.", new AcceptableValueRange<float>(-.2f, .2f), new ConfigurationManagerAttributes { ShowRangeAsPercent = false }));
+            if (waterOffset != null) waterOffset.SettingChanged -= SnapOffset;
+            waterOffset = config.Bind("Propulsion", "Vertical offset (metres)", 0f, new ConfigDescription(
+                "Moves thrust and all water-detection points together along the boat's vertical axis. Positive raises, negative lowers. Steps of 0.01 m; model position stays unchanged.",
+                new AcceptableValueRange<float>(-2f, 2f), new ConfigurationManagerAttributes { ShowRangeAsPercent = false, CustomDrawer = DrawOffset }));
+            waterOffset.SettingChanged += SnapOffset;
+            SnapOffset(waterOffset, EventArgs.Empty);
+            showMarkers = config.Bind("Display", "Show propulsion markers", false, "Show the current/last boat's live physics centre of mass and installed propellers' thrust points and directions, through the hull, inside or outside the shipyard.");
             trimAngle = config.Bind("Trim", "Bow-up angle (degrees)", 80f, new ConfigDescription(
                 "Average bow-up target during forward propulsion, shared by all propellers on a boat. Zero targets level with pitch compensation, 90 vertical and 180 inverted. Values above 90 permit intentional inversion.",
                 new AcceptableValueRange<float>(0f, 180f), new ConfigurationManagerAttributes { ShowRangeAsPercent = false }));
+        }
+        private static void SnapOffset(object sender, EventArgs args)
+        {
+            var entry = (ConfigEntry<float>)sender;
+            float value = Mathf.Round(Finite(entry, 0f, -2f, 2f) * 100f) / 100f;
+            if (entry.Value != value) entry.Value = value;
+        }
+        private static void DrawOffset(ConfigEntryBase entry)
+        {
+            var offset = (ConfigEntry<float>)entry;
+            GUILayout.BeginHorizontal();
+            float value = GUILayout.HorizontalSlider(offset.Value, -2f, 2f, GUILayout.MinWidth(130f));
+            if (GUILayout.Button("−", GUILayout.Width(25f))) value -= .01f;
+            if (GUILayout.Button("+", GUILayout.Width(25f))) value += .01f;
+            value = Mathf.Clamp(Mathf.Round(value * 100f) / 100f, -2f, 2f);
+            GUILayout.Label(value.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + " m", GUILayout.Width(70f));
+            if (value != offset.Value) offset.Value = value;
+            GUILayout.EndHorizontal();
         }
         private Harmony harmony;
         private void Awake()
@@ -51,8 +77,9 @@ namespace JetPump
                 harmony.PatchAll(typeof(Plugin).Assembly);
                 PumpInput.PatchCheatspeed(harmony);
                 gameObject.AddComponent<PairingMenu>();
+                gameObject.AddComponent<PumpMarkers>();
                 Ready = true;
-                Logger.LogInfo("Propeller 1.0.0 loaded: Propeller 604 (30,000 N), controller 605, Huge Propeller 606 (600,000 N).");
+                Logger.LogInfo("Propeller 1.1.0 loaded: Propeller 604 (30,000 N), controller 605, Huge Propeller 606 (600,000 N).");
             }
             catch (Exception e)
             {
@@ -65,6 +92,7 @@ namespace JetPump
         private void OnDestroy()
         {
             Ready = false;
+            if (waterOffset != null) waterOffset.SettingChanged -= SnapOffset;
             PairingMenu.Close();
             harmony?.UnpatchSelf();
             PumpWorld.Reset();
@@ -92,14 +120,14 @@ namespace JetPump
         private static void Validate(GameObject prefab, int id)
         {
             if (!prefab || !prefab.GetComponent<ShipItem>() || !prefab.GetComponent<SaveablePrefab>() ||
-                prefab.GetComponent<SaveablePrefab>().prefabIndex != id || !prefab.GetComponent<ShipItem>().wallAttachment || !prefab.transform.Find("JetPumpAssetContract_v12"))
+                prefab.GetComponent<SaveablePrefab>().prefabIndex != id || !prefab.GetComponent<ShipItem>().wallAttachment || !prefab.transform.Find("JetPumpAssetContract_v13"))
                 throw new InvalidOperationException("Invalid bundled item " + id);
         }
         internal static bool IsOurItem(ShipItem item)
         {
             var save = item.GetComponent<SaveablePrefab>();
             return save && PumpState.IsItem(save.prefabIndex) &&
-                item.transform.Find("JetPumpAssetContract_v12");
+                item.transform.Find("JetPumpAssetContract_v13");
         }
         internal static void Register(PrefabsDirectory directory)
         {
@@ -144,6 +172,7 @@ namespace JetPump
     internal sealed class ConfigurationManagerAttributes
     {
         public bool? ShowRangeAsPercent;
+        public Action<ConfigEntryBase> CustomDrawer;
     }
 
     internal static class PumpWorld
@@ -314,6 +343,7 @@ namespace JetPump
         public bool Enabled;
         public bool RequireImmersion;
         public bool RequirePairChoice;
+        public bool SafetyEnabled;
         public int Number;
         public string Wheel = "";
         // Boat-model-local pose, independent of recovery's temporary world rotation.
@@ -362,7 +392,7 @@ namespace JetPump
             if (id <= 0 || !IsItem(kind)) throw new ArgumentException("Invalid item identity.");
             if (!Items.TryGetValue(id, out var record))
             {
-                Items.Add(id, record = new PumpRecord { Id = id, Kind = kind });
+                Items.Add(id, record = new PumpRecord { Id = id, Kind = kind, SafetyEnabled = kind == ControllerId });
             }
             if (record.Kind != kind) throw new InvalidOperationException("Saved item identity belongs to a different prefab.");
             return record;
@@ -487,6 +517,14 @@ namespace JetPump
             }
         }
 
+        public void SafetyShutdown(int boatId)
+        {
+            if (!Writable || boatId <= 0) return;
+            foreach (var box in Items.Values)
+                if (box.Kind == ControllerId && box.BoatId == boatId && box.SafetyEnabled && ValidPair(box))
+                    Peer(box).Enabled = false; // Retain throttle, power, pairing and wheel assignment.
+        }
+
         public bool Select(PumpRecord box, string wheel)
         {
             if (!ValidPair(box) || string.IsNullOrEmpty(wheel)) return false;
@@ -498,7 +536,7 @@ namespace JetPump
 
         public string Encode()
         {
-            var text = new StringBuilder("JetPump/5\n");
+            var text = new StringBuilder("JetPump/6\n");
             var keys = new List<int>(Items.Keys);
             keys.Sort();
             foreach (int key in keys)
@@ -509,7 +547,7 @@ namespace JetPump
                     .Append(r.Enabled ? 1 : 0).Append('|').Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(r.Wheel ?? ""))).Append('|')
                     .Append(r.RequirePairChoice ? 1 : 0).Append('|').Append(r.Number).Append('|').Append(r.HasPose ? 1 : 0);
                 foreach (float value in new[] { r.X, r.Y, r.Z, r.Qx, r.Qy, r.Qz, r.Qw }) text.Append('|').Append(value.ToString("R", Invariant));
-                text.Append('|').Append(r.RequireImmersion ? 1 : 0);
+                text.Append('|').Append(r.RequireImmersion ? 1 : 0).Append('|').Append(r.SafetyEnabled ? 1 : 0);
                 text.Append('\n');
             }
             return text.ToString();
@@ -523,7 +561,8 @@ namespace JetPump
             bool legacy = lines[0].TrimEnd('\r') == "JetPump/1";
             bool previousFormat = lines[0].TrimEnd('\r') == "JetPump/2";
             bool boatNumbers = lines[0].TrimEnd('\r') == "JetPump/3";
-            bool immersion = lines[0].TrimEnd('\r') == "JetPump/4" || lines[0].TrimEnd('\r') == "JetPump/5";
+            bool safety = lines[0].TrimEnd('\r') == "JetPump/6";
+            bool immersion = safety || lines[0].TrimEnd('\r') == "JetPump/4" || lines[0].TrimEnd('\r') == "JetPump/5";
             if (!legacy && !previousFormat && !boatNumbers && !immersion) { result.Writable = false; return result; }
             result.MigratedNumbers = legacy || previousFormat;
             try
@@ -532,7 +571,7 @@ namespace JetPump
                 {
                     if (string.IsNullOrWhiteSpace(lines[i])) continue;
                     var f = lines[i].TrimEnd('\r').Split('|');
-                    if (f.Length != (legacy ? 11 : immersion ? 20 : 19)) throw new FormatException("Record length");
+                    if (f.Length != (legacy ? 11 : safety ? 21 : immersion ? 20 : 19)) throw new FormatException("Record length");
                     var r = new PumpRecord {
                         Id = int.Parse(f[0], Invariant), Kind = int.Parse(f[1], Invariant), PeerId = int.Parse(f[2], Invariant),
                         BoatId = int.Parse(f[3], Invariant), Mounted = f[4] == "1", Power = int.Parse(f[5], Invariant),
@@ -548,6 +587,11 @@ namespace JetPump
                     {
                         if (f[19] != "0" && f[19] != "1") throw new FormatException("Immersion switch");
                         r.RequireImmersion = f[19] == "1";
+                    }
+                    if (safety)
+                    {
+                        if (f[20] != "0" && f[20] != "1") throw new FormatException("Safety switch");
+                        r.SafetyEnabled = r.Kind == ControllerId && f[20] == "1";
                     }
                     if (r.Id <= 0 || !IsItem(r.Kind) || result.Items.ContainsKey(r.Id)) throw new FormatException("Record identity");
                     r.Normalize();
@@ -578,4 +622,120 @@ namespace JetPump
             return result;
         }
     }
+    // Screen-projected diagnostic markers remain visible through hull and water.
+    // No physics colliders, extra scene cameras, or SailBalance dependency.
+    internal sealed class PumpMarkers : MonoBehaviour
+    {
+        private struct Marker { internal Vector3 Point, Direction; internal string Label; }
+        private readonly List<Marker> markers = new List<Marker>();
+        private Camera source;
+        private Transform boatRoot;
+        private Rigidbody body;
+        private Texture2D dot;
+        private GUIStyle labelStyle;
+        private static readonly Color MassColor = new Color(1f, .84f, .12f);
+        private static readonly Color ForceColor = new Color(.15f, .95f, 1f);
+        private void LateUpdate() { Refresh(); }
+        internal void Refresh()
+        {
+            markers.Clear();
+            if (!Plugin.Ready || !Plugin.ShowMarkers || !GameState.playing || PumpWorld.Loading || GameState.currentlyLoading || GameState.recovering)
+            { boatRoot = null; body = null; return; }
+            Transform target = GameState.currentBoat ? GameState.currentBoat.parent : GameState.lastBoat;
+            if (target != boatRoot || !body) { boatRoot = target; body = target ? target.GetComponent<Rigidbody>() : null; }
+            if (!body) return;
+            var save = boatRoot.GetComponent<SaveableObject>();
+            if (!save) return;
+            Transform model = GameState.currentBoat;
+            if (!model || model.parent != boatRoot)
+            {
+                var refs = boatRoot.GetComponent<BoatRefs>();
+                model = refs ? refs.boatModel : null;
+            }
+            foreach (var record in PumpWorld.State.Items.Values)
+            {
+                if (!PumpState.IsPump(record.Kind) || !record.Mounted || record.BoatId != save.sceneIndex) continue;
+                var item = PumpWorld.Find(record.Id);
+                Vector3 point, direction;
+                if (item && item.TryThrustGeometry(out point, out direction)) { }
+                else if (!TrySavedGeometry(record, model, out point, out direction)) continue;
+                markers.Add(new Marker { Point = point, Direction = direction, Label = PumpState.Label(record) });
+            }
+        }
+        internal static bool TrySavedGeometry(PumpRecord record, Transform model, out Vector3 point, out Vector3 direction)
+        {
+            point = direction = Vector3.zero;
+            if (!model || !record.HasPose) return false;
+            var prefab = record.Kind == PumpState.HugePumpId ? PumpAssets.HugePump : PumpAssets.Pump;
+            if (!prefab) return false;
+            Transform anchor = null;
+            foreach (var child in prefab.GetComponentsInChildren<Transform>(true)) if (child.name == "ThrustPoint") { anchor = child; break; }
+            if (!anchor) return false;
+            var rotation = new Quaternion(record.Qx, record.Qy, record.Qz, record.Qw).normalized;
+            Vector3 local = new Vector3(record.X, record.Y, record.Z) + rotation * prefab.transform.InverseTransformPoint(anchor.position);
+            point = model.TransformPoint(local) + model.up * Plugin.VerticalOffset;
+            direction = -model.TransformDirection(rotation * prefab.transform.InverseTransformDirection(anchor.forward)).normalized;
+            return true;
+        }
+        private void OnGUI()
+        {
+            if (Event.current.type != EventType.Repaint || !Plugin.Ready || !Plugin.ShowMarkers || !body || !GameState.playing ||
+                PumpWorld.Loading || GameState.currentlyLoading || GameState.recovering) return;
+            if (!source || !source.isActiveAndEnabled) source = Camera.main;
+            if (!source) return;
+            if (!dot) MakeDot();
+            if (labelStyle == null) labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 28, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft };
+            int previousDepth = GUI.depth; Color previousColor = GUI.color;
+            GUI.depth = 1000; // Configurator/other IMGUI windows remain in front.
+            DrawMarker(body.worldCenterOfMass, Vector3.zero, "Center of mass", MassColor);
+            foreach (var marker in markers) DrawMarker(marker.Point, marker.Direction, marker.Label, ForceColor);
+            GUI.color = previousColor; GUI.depth = previousDepth;
+        }
+        private bool Project(Vector3 world, out Vector2 screen)
+        {
+            Vector3 p = source.WorldToScreenPoint(world);
+            screen = new Vector2(p.x, Screen.height - p.y);
+            return p.z > source.nearClipPlane && p.x >= 0 && p.x <= Screen.width && p.y >= 0 && p.y <= Screen.height;
+        }
+        private void DrawMarker(Vector3 point, Vector3 direction, string label, Color color)
+        {
+            if (!Project(point, out var at)) return;
+            if (direction.sqrMagnitude > .01f && Project(point + direction, out var end))
+            {
+                Vector2 delta = end - at;
+                if (delta.sqrMagnitude > 4f)
+                {
+                    Vector2 tip = at + delta.normalized * 76f;
+                    Line(at, tip, color);
+                    Vector2 back = -delta.normalized * 16f, side = new Vector2(-back.y, back.x) * .5f;
+                    Line(tip, tip + back + side, color); Line(tip, tip + back - side, color);
+                }
+            }
+            GUI.color = Color.black; GUI.DrawTexture(new Rect(at.x - 18, at.y - 18, 36, 36), dot);
+            GUI.color = color; GUI.DrawTexture(new Rect(at.x - 12, at.y - 12, 24, 24), dot);
+            GUI.color = Color.white;
+            labelStyle.normal.textColor = Color.black; GUI.Label(new Rect(at.x + 24, at.y - 20, 300, 48), label, labelStyle);
+            labelStyle.normal.textColor = color; GUI.Label(new Rect(at.x + 22, at.y - 22, 300, 48), label, labelStyle);
+        }
+        private static void Line(Vector2 from, Vector2 to, Color color)
+        {
+            var matrix = GUI.matrix;
+            GUI.color = color;
+            GUIUtility.RotateAroundPivot(Mathf.Atan2(to.y - from.y, to.x - from.x) * Mathf.Rad2Deg, from);
+            GUI.DrawTexture(new Rect(from.x, from.y - 2f, Vector2.Distance(from, to), 4f), Texture2D.whiteTexture);
+            GUI.matrix = matrix;
+        }
+        private void MakeDot()
+        {
+            dot = new Texture2D(32, 32, TextureFormat.RGBA32, false) { name = "PropellerMarker", hideFlags = HideFlags.HideAndDontSave };
+            for (int y = 0; y < 32; y++) for (int x = 0; x < 32; x++)
+            {
+                float distance = Vector2.Distance(new Vector2(x, y), new Vector2(15.5f, 15.5f));
+                dot.SetPixel(x, y, new Color(1, 1, 1, Mathf.Clamp01(15.5f - distance)));
+            }
+            dot.Apply(false, true);
+        }
+        private void OnDisable() { markers.Clear(); source = null; boatRoot = null; body = null; if (dot) Destroy(dot); dot = null; }
+    }
+
 }

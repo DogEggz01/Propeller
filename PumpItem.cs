@@ -25,9 +25,9 @@ namespace JetPump
         internal bool WheelSelected => CanOperate && BoundWheel && PumpWorld.Selected(BoundWheel) == this;
         private int session = -1, warmup;
         private float reconcileTimer;
-        private Transform rotor, needle, lever, immersionLever;
+        private Transform rotor, needle, lever, immersionLever, safetyLever;
         private Vector3 thrustLocal, thrustFacing, rotorAxis, needleAxis;
-        private Quaternion leverBase, immersionBase, needleBase;
+        private Quaternion leverBase, immersionBase, safetyBase, needleBase;
         private TextMesh[] powerDigits;
         private TextMesh identityText;
         private PumpPowerDisplay powerDisplay;
@@ -84,6 +84,8 @@ namespace JetPump
                 AddControl("HIT_WheelAssign", PumpControl.Action.SelectWheel, Require("WheelAssignPivot"));
                 immersionLever = Require("ImmersionLeverPivot"); immersionBase = immersionLever.localRotation;
                 AddControl("HIT_Immersion", PumpControl.Action.Immersion, null);
+                safetyLever = Require("SafetyLeverPivot"); safetyBase = safetyLever.localRotation;
+                AddControl("HIT_Safety", PumpControl.Action.Safety, null);
             }
             identityText = Require("IdentityText").GetComponent<TextMesh>();
         }
@@ -198,14 +200,23 @@ namespace JetPump
             if (Record.RequireImmersion) Water.Evaluate();
             float effectivePower = Water.Power(Record);
             if (effectivePower <= 0f) return false;
-            Vector3 proxyPoint = Item.itemRigidbodyC.transform.TransformPoint(thrustLocal);
-            Vector3 proxyFacing = Item.itemRigidbodyC.transform.TransformDirection(thrustFacing);
-            Vector3 point = ConvertPoint(proxyPoint, Item.currentWalkCol, Item.currentActualBoat);
-            Vector3 direction = ConvertDirection(proxyFacing, Item.currentWalkCol, Item.currentActualBoat);
+            if (!TryThrustGeometry(out var point, out var direction)) return false;
             if (!trim) trim = boatBody.GetComponent<PumpTrim>() ?? boatBody.gameObject.AddComponent<PumpTrim>();
-            drive.Apply(boatBody, -direction, point, effectivePower, Time.fixedDeltaTime, trim, PumpState.RatedThrust(Record.Kind));
+            drive.Apply(boatBody, direction, point, effectivePower, Time.fixedDeltaTime, trim, PumpState.RatedThrust(Record.Kind));
             return true;
         }
+        // Used by physics and the marker overlay, even when the engine is OFF.
+        internal bool TryThrustGeometry(out Vector3 point, out Vector3 direction)
+        {
+            point = direction = Vector3.zero;
+            if (!IsPump || !Installed || !Item.currentWalkCol) return false;
+            var proxy = Item.itemRigidbodyC.transform;
+            point = ConvertPoint(proxy.TransformPoint(thrustLocal), Item.currentWalkCol, Item.currentActualBoat) + SpatialOffset;
+            direction = -ConvertDirection(proxy.TransformDirection(thrustFacing), Item.currentWalkCol, Item.currentActualBoat);
+            return true;
+        }
+        internal Vector3 SpatialOffset => Item.currentActualBoat ? Item.currentActualBoat.up * Plugin.VerticalOffset : Vector3.zero;
+
         public static Vector3 ConvertPoint(Vector3 point, Transform walk, Transform actual) => actual.TransformPoint(walk.InverseTransformPoint(point));
         public static Vector3 ConvertDirection(Vector3 direction, Transform walk, Transform actual) => actual.TransformDirection(walk.InverseTransformDirection(direction)).normalized;
 
@@ -225,13 +236,14 @@ namespace JetPump
             int power = pump == null ? -1 : pump.Power;
             powerDisplay.Show(power, Time.deltaTime, !PumpWorld.InputAllowed);
             lever.localRotation = leverBase * Quaternion.AngleAxis(pump != null && pump.Enabled ? -50f : 50f, Vector3.right);
+            safetyLever.localRotation = safetyBase * Quaternion.AngleAxis(Record.SafetyEnabled ? -35f : 35f, Vector3.right);
             immersionLever.localRotation = immersionBase * Quaternion.AngleAxis(pump != null && pump.RequireImmersion ? -35f : 35f, Vector3.right);
         }
     }
 
     public sealed class PumpControl : GoPointerButton
     {
-        internal enum Action { Toggle, Decrease, Increase, SelectWheel, Immersion }
+        internal enum Action { Toggle, Decrease, Increase, SelectWheel, Immersion, Safety }
         internal PumpItem Owner;
         private Action action;
         private Transform button;
@@ -274,6 +286,11 @@ namespace JetPump
         internal void Activate()
         {
             if (!CanUse) return;
+            if (action == Action.Safety)
+            {
+                Owner.Record.SafetyEnabled = !Owner.Record.SafetyEnabled;
+                return;
+            }
             var pairedRecord = PumpWorld.State.Peer(Owner.Record);
             if (pairedRecord == null)
             {
