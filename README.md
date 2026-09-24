@@ -18,16 +18,18 @@ Astonding technology breakthrough from Al'Ankh Academy!
   - Power switch: On/off
   - Water Switch: Water/Air
     - It control if propeller need to be submerged in water to produce propulsion. If switch to Air it will work everywhere, even submerged.
-  - Engine Power: 5-100
+  - Engine Power: 5-100. 
     - Use the arrow below to control the power.
+  - Wheel Control: after click, make wheel control this propeller's throttle
+  - Safety Switch: When On, Power will be shut off automatically when you exit the boat.
   - Throttle meter: Show current throttle. 
-      - Press W/S while holding wheel to increase/decrease throttle.
-  - Wheel Control: after click, make wheel control this propeller's throttle  
+    - Press W/S while holding wheel to increase/decrease throttle.
   
 <img width="3840" height="2160" alt="2046A5~1" src="https://github.com/user-attachments/assets/da86f056-4772-4532-a324-69b8506c258a" />
 
 - You can install multiple propeller on same boat. There is no limit, but each panel only pair with 1 propeller.
   - The force will stack, so putting on 3 propeller is faster than 1.
-- 2 option in configurator
-  - Offset: control the force emitter vertical offset
-  - Trim Angle: Control the bow lifting angle for propulsion. If disable you will find yourself nosedive into water in high propulsion force
+- 3 option in configurator
+  - Offset: control the thrust vertical offset
+  - Trim Angle: Control the bow lifting angle for propulsion.
+  - Show Marker: Show Center of Mass and propeller thrust force location
