@@ -33,3 +33,4 @@ Astonding technology breakthrough from Al'Ankh Academy!
   - Offset: control the thrust vertical offset
   - Trim Angle: Control the bow lifting angle for propulsion.
   - Show Marker: Show Center of Mass and propeller thrust force location
+<img width="1536" height="864" alt="image" src="https://github.com/user-attachments/assets/adedbedb-7819-4ff0-b12c-ab5e9b799e0f" />
