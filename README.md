@@ -24,8 +24,10 @@ Astonding technology breakthrough from Al'Ankh Academy!
   - Safety Switch: When On, Power will be shut off automatically when you exit the boat.
   - Throttle meter: Show current throttle. 
     - Press W/S while holding wheel to increase/decrease throttle.
+  - Control group: When multiple panel set to same group, all switch and button will linked together, including throttle control.
   
-<img width="3072" height="1728" alt="image" src="https://github.com/user-attachments/assets/ff699de6-ef4a-46e4-9a77-efdfa2f32499" />
+<img width="3840" height="2160" alt="202610~3" src="https://github.com/user-attachments/assets/6dda00c9-614d-4c2c-a3d5-2219195a8560" />
+
 
 - You can install multiple propeller on same boat. There is no limit, but each panel only pair with 1 propeller.
   - The force will stack, so putting on 3 propeller is faster than 1.
