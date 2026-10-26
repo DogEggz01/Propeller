@@ -6,7 +6,6 @@ Astonding technology breakthrough from Al'Ankh Academy!
 (it means it's very cheaty)
 
 ## Propeller and control panel
-- Version 1.2.2: a nailed control panel can pair anywhere on its ship, including on furniture or in the air. The game must recognize the panel as belonging to that ship. Existing same-ship pairings are retained when you move and re-nail the panel.
 - Both item are now sold at Al'Ankh Academy vendor. It's VERY expensive.
 - Attach the propeller and control panel to the postion of your liking, then hammer it to install. Before hammered it won't be able to work.
   - Control panel will automatically pair with the propeller installed after hammered.
