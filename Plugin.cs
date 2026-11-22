@@ -14,9 +14,11 @@ namespace JetPump
 {
     // Plugin setup, configuration, asset registration and persistent world state.
 
-    [BepInPlugin(Guid, "Propeller", "1.2.3")]
+    [BepInPlugin(Guid, "Propeller", "1.2.4")]
     [BepInDependency("com.nandbrew.nandcommand", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency("pr0skynesis.dinghies", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("DogEggz.EconomyOverhaul", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("DogEggz.TentandPlank", BepInDependency.DependencyFlags.SoftDependency)]
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Guid = "DogEggz.JetPump";
@@ -85,10 +87,11 @@ namespace JetPump
                 harmony.PatchAll(typeof(Plugin).Assembly);
                 PumpInput.PatchCheatspeed(harmony);
                 PumpTiller.Patch(harmony);
+                PumpCarry.Find();
                 gameObject.AddComponent<PairingMenu>();
                 gameObject.AddComponent<PumpMarkers>();
                 Ready = true;
-                Logger.LogInfo("Propeller 1.2.3 loaded: Propeller 604 (30,000 N), controller 605, Huge Propeller 606 (800,000 N).");
+                Logger.LogInfo("Propeller 1.2.4 loaded: Propeller 604 (30,000 N), controller 605, Huge Propeller 606 (800,000 N).");
             }
             catch (Exception e)
             {

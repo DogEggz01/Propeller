@@ -19,7 +19,7 @@ namespace JetPump
         internal bool IsPump => Saveable && PumpState.IsPump(Saveable.prefabIndex);
         internal bool Installed => !Retiring && !Mount.Cached && Record != null && Record.Mounted && warmup >= 8 && Item.sold && !Item.held &&
             Item.currentActualBoat && PumpWorld.BoatId(Item.currentActualBoat) == Record.BoatId && Item.itemRigidbodyC &&
-            Item.itemRigidbodyC.attached && Mount.Verified && Item.itemRigidbodyC.GetCurrentInventorySlot() == null &&
+            Item.itemRigidbodyC.attached && !Mount.Riding && Mount.Verified && Item.itemRigidbodyC.GetCurrentInventorySlot() == null &&
             Item.itemRigidbodyC.GetCurrentBox() == null && Saveable.currentCrateId == 0 && gameObject.layer != 26;
         internal bool CanOperate => !IsPump && Installed && Item.nailed;
         internal bool WheelSelected => CanOperate && Record.Wheel.Length > 0 && PumpWorld.PairOperational(this, out _);
@@ -400,13 +400,15 @@ namespace JetPump
         private Quaternion contactRotation;
         private bool previewValid, recoveryChecked, itemReady;
         private BoatEmbarkCollider bound;
+        private int remountTries;
         internal bool Pending;
+        internal bool Riding;
         internal bool LoadedFromSave;
 
         internal PumpMount(PumpItem owner) { this.owner = owner; housing = owner.GetComponent<BoxCollider>(); }
         internal static void ResetCache() { boats = null; nextBoatScan = 0f; }
         internal void ResetBinding() { bound = null; recoveryChecked = false; }
-        internal void Cancel() { Pending = previewValid = false; contact = null; bound = null; LoadedFromSave = false; }
+        internal void Cancel() { Pending = previewValid = Riding = false; remountTries = 0; contact = null; bound = null; LoadedFromSave = false; }
         internal bool Stored => owner.Saveable.currentCrateId != 0 || owner.gameObject.layer == 26 ||
             (owner.Item.itemRigidbodyC && (owner.Item.itemRigidbodyC.GetCurrentBox() || owner.Item.itemRigidbodyC.GetCurrentInventorySlot()));
         internal bool Cached => owner.Saveable && (owner.Saveable.GetParentObject() == -2 || owner.Saveable.GetParentObject() == -3);
@@ -433,10 +435,11 @@ namespace JetPump
             var root = boat.transform.parent.parent;
             return root.GetComponent<Rigidbody>() && root.GetComponent<BoatMass>() && PumpWorld.BoatId(boat.transform.parent) > 0;
         }
-        internal static BoatEmbarkCollider ResolveSurface(Collider surface, out Transform frame)
+        // An item's surface counts only when itemsCount: it is aboard a boat when it sits under that boat's walk copy or model.
+        internal static BoatEmbarkCollider ResolveSurface(Collider surface, bool itemsCount, out Transform frame)
         {
             frame = null;
-            if (!surface || surface.GetComponentInParent<ShipItem>() || surface.GetComponentInParent<ItemRigidbody>()) return null;
+            if (!surface || !itemsCount && (surface.GetComponentInParent<ShipItem>() || surface.GetComponentInParent<ItemRigidbody>())) return null;
             BoatEmbarkCollider result = null;
             foreach (var boat in Boats())
             {
@@ -485,9 +488,9 @@ namespace JetPump
             previewValid = false; position = Vector3.zero; rotation = Quaternion.identity;
             if (!proxy || !owner.Item.held || !PumpWorld.InputAllowed) return false;
             if (!Raycast(new Ray(proxy.position, proxy.forward), 1.3f, out var hit) || hit.distance < .1f) return false;
-            // Only a boat surface can create a powered-item mount. Ordinary world
-            // geometry must remain a free drop, not a permanently pending boat claim.
-            if (!ResolveSurface(hit.collider, out _)) return false;
+            // Only a surface aboard a boat (its own or an item's) can create a powered-item mount.
+            // Ordinary world geometry must remain a free drop, not a permanently pending boat claim.
+            if (!ResolveSurface(hit.collider, true, out _)) return false;
             rotation = SurfaceRotation(hit.normal, owner.transform.up);
             position = ClearancePosition(hit.point, hit.normal, rotation);
             RememberContact(hit.collider, position, rotation);
@@ -523,10 +526,23 @@ namespace JetPump
             // These are vanilla lifecycle markers, never missing boat references to repair.
             if (Cached || owner.Retiring || owner.Item.held || Stored || !owner.Item.sold || !owner.Item.itemRigidbodyC) return;
             if (!owner.Item.itemRigidbodyC.GetBody() || !ItemReady()) return;
+            if (owner.Record.Mounted || owner.Item.nailed)
+            {
+                // Carried on a plank or pole: its carrier places it, and it is off the wall until set down, then mounted there.
+                bool rode = Riding;
+                Riding = PumpCarry.Riding(owner.Item);
+                if (Riding)
+                {
+                    if (!rode && owner.Record.Mounted) { if (owner.IsPump) PumpWorld.State.StopPump(owner.Record); else PumpWorld.State.StopController(owner.Record); }
+                    return;
+                }
+                if (rode) remountTries = 1;
+                if (remountTries > 0) { Remount(); return; }
+            }
             if (Pending)
             {
                 if (!contact) { Pending = false; return; }
-                var boat = ResolveSurface(contact, out var frame);
+                var boat = ResolveSurface(contact, true, out var frame);
                 if (!boat) return;
                 Vector3 local = frame.InverseTransformPoint(contact.transform.TransformPoint(contactPosition));
                 Quaternion localRot = Quaternion.Inverse(frame.rotation) * contact.transform.rotation * contactRotation;
@@ -561,7 +577,7 @@ namespace JetPump
                 var inward = owner.transform.forward;
                 if (!Raycast(new Ray(owner.transform.position - inward * .05f, inward), .07f, out var hit) ||
                     Vector3.Distance(hit.point, owner.transform.position) > .012f || Vector3.Dot(-hit.normal, inward) < .985f) return;
-                var boat = ResolveSurface(hit.collider, out var frame);
+                var boat = ResolveSurface(hit.collider, false, out var frame);
                 if (!boat || (owner.Saveable.GetParentObject() > 0 && owner.Saveable.GetParentObject() != PumpWorld.BoatId(boat.transform.parent))) return;
                 // This ray is in actual world space, not the walking-proxy frame.
                 if (frame != boat.transform.parent) return;
@@ -571,6 +587,20 @@ namespace JetPump
                     CapturePose();
                 }
             }
+        }
+        // Set down after a ride: still nailed and attached on a boat, mounted where it now sits on that boat; let go or aboard
+        // none, off the wall. Binding can fail while the carrier's last step settles, so it is tried for 50 ticks.
+        private void Remount()
+        {
+            var frame = owner.Item.currentActualBoat;
+            var boat = frame && owner.Item.nailed && owner.Item.itemRigidbodyC.attached ? FindSavedBoat(PumpWorld.BoatId(frame)) : null;
+            if (boat && Bind(boat, frame.InverseTransformPoint(owner.transform.position), Quaternion.Inverse(frame.rotation) * owner.transform.rotation))
+            {
+                PumpWorld.State.Install(owner.Record, PumpWorld.BoatId(frame));
+                CapturePose();
+                remountTries = 0;
+            }
+            else if (!boat || ++remountTries > 50) owner.Removed();
         }
         internal void CapturePose()
         {
@@ -606,6 +636,34 @@ namespace JetPump
         {
             var targeter = owner.Item.held.GetTargeter();
             if (targeter) TargeterActive.SetValue(targeter, false);
+        }
+    }
+
+    // EconomyOverhaul's and Tent and Plank's carry (PoleCarry.Riding): an item nailed on a plank or pole that is picked up rides with it.
+    internal static class PumpCarry
+    {
+        private static Func<ShipItem, bool>[] riding = new Func<ShipItem, bool>[0];
+        internal static void Find()
+        {
+            var found = new List<Func<ShipItem, bool>>();
+            foreach (var mod in new[] { "EconomyOverhaul", "TentandPlank" })
+            {
+                var type = PumpWorld.OptionalType(mod, mod + ".PoleCarry");
+                if (type == null) continue;
+                var method = AccessTools.Method(type, "Riding", new[] { typeof(ShipItem) });
+                if (method == null || !method.IsStatic || method.ReturnType != typeof(bool))
+                {
+                    Plugin.Log.LogWarning(mod + "'s PoleCarry.Riding was not found: items on its planks and poles are not carried.");
+                    continue;
+                }
+                found.Add((Func<ShipItem, bool>)Delegate.CreateDelegate(typeof(Func<ShipItem, bool>), method));
+            }
+            riding = found.ToArray();
+        }
+        internal static bool Riding(ShipItem item)
+        {
+            for (int i = 0; i < riding.Length; i++) if (riding[i](item)) return true;
+            return false;
         }
     }
 
